@@ -68,7 +68,7 @@ h1{font-size:1.25rem;font-weight:500;color:#8a8a8a;margin-bottom:2rem;letter-spa
   <div class="or-divider">or</div>
   <div class="stego-upload">
     <input type="file" id="stego-file" accept="image/png,image/jpeg,image/webp">
-    <label for="stego-file" id="stego-label">Upload a stego image to extract token</label>
+    <label for="stego-file" id="stego-label">Insert token image</label>
   </div>
   <div id="stego-status"></div>
   <div class="footer"><span class="status-dot"></span>Sigil Private Access</div>
