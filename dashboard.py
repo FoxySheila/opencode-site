@@ -6,6 +6,7 @@ Flow: browse for image → label → duration → max uses → generate+embed+st
 Usage:  python3 dashboard.py
 """
 import hashlib
+import http.cookiejar
 import json
 import os
 import secrets
@@ -15,6 +16,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor
 
 from stego import embed_all_into_png
 
@@ -249,18 +251,33 @@ def pick_max_uses() -> int:
 
 # ── KV storage ──
 
+def _kv_opener():
+    """Return cookie-based opener if CF_COOKIE_FILE is set."""
+    cf = os.environ.get("CF_COOKIE_FILE", "")
+    if not cf or not os.path.isfile(cf):
+        return None
+    cj = http.cookiejar.MozillaCookieJar(cf)
+    cj.load(ignore_expires=True, ignore_discard=True)
+    return build_opener(HTTPCookieProcessor(cj))
+
+
+def _kv_base() -> str:
+    return "https://dash.cloudflare.com/api/v4" if os.environ.get("CF_COOKIE_FILE", "") else "https://api.cloudflare.com/client/v4"
+
+
 def store_in_kv(api_token: str, account_id: str, ns_id: str,
                 key: str, value: bytes, expiration: int | None) -> bool:
-    from urllib.request import Request, urlopen
-    path = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}"
+    path = f"{_kv_base()}/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}"
     if expiration:
         path += f"?expiration={expiration}"
-    req = Request(path, data=value, headers={
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/octet-stream",
-    }, method="PUT")
+    opener = _kv_opener()
+    hdrs = {"Content-Type": "application/octet-stream"}
+    if not opener:
+        hdrs["Authorization"] = f"Bearer {api_token}"
+    req = Request(path, data=value, headers=hdrs, method="PUT")
     try:
-        with urlopen(req) as r:
+        opener_ctx = opener if opener else urlopen
+        with opener_ctx.open(req) as r:
             resp = json.loads(r.read())
         return resp.get("success", False)
     except Exception as e:
@@ -335,6 +352,7 @@ def main():
     api_token = os.environ.get("CLOUDFLARE_API_TOKEN", "")
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
     ns_id = os.environ.get("CLOUDFLARE_KV_NAMESPACE", "")
+    cookie_file = os.environ.get("CF_COOKIE_FILE", "")
 
     key = f"tok_{_sha256(token)}"
     uses_key = f"{key}:u"

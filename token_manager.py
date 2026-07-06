@@ -20,7 +20,8 @@ import secrets
 import subprocess
 import sys
 import time
-from urllib.request import Request, urlopen
+import http.cookiejar
+from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor
 from urllib.error import HTTPError
 
 
@@ -36,7 +37,29 @@ _SITE_AGEPUB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site.ag
 # ── Config ──
 
 API_BASE = "https://api.cloudflare.com/client/v4"
+DASH_BASE = "https://dash.cloudflare.com/api/v4"
 DEFAULT_DURATION = 30 * 86400  # 30 days
+
+_CF_COOKIE_FILE = None  # set via --cookie-file or CF_COOKIE_FILE env
+
+
+def _cf_opener():
+    """Return an opener with cookie-based auth if cookie file is set."""
+    if not _CF_COOKIE_FILE or not os.path.isfile(_CF_COOKIE_FILE):
+        return None
+    cj = http.cookiejar.MozillaCookieJar(_CF_COOKIE_FILE)
+    cj.load(ignore_expires=True, ignore_discard=True)
+    return build_opener(HTTPCookieProcessor(cj))
+
+
+def _cf_url(path, params=None):
+    """Build URL using cookie auth base if available, else standard API base."""
+    base = DASH_BASE if _CF_COOKIE_FILE else API_BASE
+    url = f"{base}{path}"
+    if params:
+        qs = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        url += f"?{qs}"
+    return url
 
 
 def _get_env():
@@ -46,37 +69,42 @@ def _get_env():
     return token, account, ns_id
 
 
-def _headers(token):
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
+def _headers(headers=None):
+    h = {"Content-Type": "application/json"}
+    if _CF_COOKIE_FILE:
+        h["User-Agent"] = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+        h["Referer"] = "https://dash.cloudflare.com/"
+    if headers:
+        h.update(headers)
+    return h
+
+
+def _cf_req(method, path, data=None, binary=False):
+    """Make a CF API request using cookie auth or token auth."""
+    opener = _cf_opener()
+    url = _cf_url(path)
+    hdrs = _headers({"Content-Type": "application/octet-stream"} if binary else None)
+    body = data if isinstance(data, (bytes, type(None))) else json.dumps(data).encode()
+    req = Request(url, data=body, headers=hdrs, method=method)
+    opener_ctx = opener if opener else urlopen
+    with opener_ctx.open(req) as r:
+        return json.loads(r.read())
 
 
 def _cf_get(token, path):
-    req = Request(f"{API_BASE}{path}", headers=_headers(token))
-    with urlopen(req) as r:
-        return json.loads(r.read())
+    return _cf_req("GET", path)
 
 
 def _cf_put(token, path, data):
-    body = json.dumps(data).encode()
-    req = Request(f"{API_BASE}{path}", data=body, headers=_headers(token), method="PUT")
-    with urlopen(req) as r:
-        return json.loads(r.read())
+    return _cf_req("PUT", path, data)
 
 
 def _cf_post(token, path, data):
-    body = json.dumps(data).encode()
-    req = Request(f"{API_BASE}{path}", data=body, headers=_headers(token), method="POST")
-    with urlopen(req) as r:
-        return json.loads(r.read())
+    return _cf_req("POST", path, data)
 
 
 def _cf_delete(token, path):
-    req = Request(f"{API_BASE}{path}", headers=_headers(token), method="DELETE")
-    with urlopen(req) as r:
-        return json.loads(r.read())
+    return _cf_req("DELETE", path)
 
 
 def _cf_put_kv(api_token, account_id, ns_id, key, value, expiration=None):
@@ -85,14 +113,28 @@ def _cf_put_kv(api_token, account_id, ns_id, key, value, expiration=None):
     params = {}
     if expiration:
         params["expiration"] = str(int(expiration))
-    if params:
-        path += "?" + "&".join(f"{k}={v}" for k, v in params.items())
     body = value if isinstance(value, bytes) else json.dumps(value).encode()
-    req = Request(f"{API_BASE}{path}", data=body, headers={
-        **{"Authorization": f"Bearer {api_token}"}, "Content-Type": "application/octet-stream",
-    }, method="PUT")
-    with urlopen(req) as r:
+    url = _cf_url(path, params or None)
+    opener = _cf_opener()
+    hdrs = _headers({"Content-Type": "application/octet-stream"})
+    req = Request(url, data=body, headers=hdrs, method="PUT")
+    opener_ctx = opener if opener else urlopen
+    with opener_ctx.open(req) as r:
         return json.loads(r.read())
+
+
+def _cf_get_kv_raw(api_token, account_id, ns_id, key):
+    """Read a raw value from KV as bytes."""
+    path = f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}"
+    url = _cf_url(path)
+    opener = _cf_opener()
+    hdrs = _headers({"Accept": "application/octet-stream"})
+    if not opener:
+        hdrs["Authorization"] = f"Bearer {api_token}"
+    req = Request(url, headers=hdrs, method="GET")
+    opener_ctx = opener if opener else urlopen
+    with opener_ctx.open(req) as r:
+        return r.read()
 
 
 # ── BLAKE3 via quichash ──
@@ -228,15 +270,9 @@ def cmd_list(args):
             return 1
         for key_info in resp.get("result", []):
             key = key_info["name"]
-            if key.startswith("tok_"):
-                val_path = f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}"
+            if key.startswith("tok_") and not key.endswith(":u"):
                 try:
-                    val_req = Request(f"{API_BASE}{val_path}", headers={
-                        "Authorization": f"Bearer {api_token}",
-                        "Accept": "application/octet-stream",
-                    })
-                    with urlopen(val_req) as vr:
-                        raw = vr.read()
+                    raw = _cf_get_kv_raw(api_token, account_id, ns_id, key)
                     decrypted = _age_decrypt(raw)
                     val_data = json.loads(decrypted)
                     tokens.append((key, val_data))
@@ -304,15 +340,9 @@ def cmd_cleanup(args):
             return 1
         for key_info in resp.get("result", []):
             key = key_info["name"]
-            if key.startswith("tok_"):
-                val_path = f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}"
+            if key.startswith("tok_") and not key.endswith(":u"):
                 try:
-                    val_req = Request(f"{API_BASE}{val_path}", headers={
-                        "Authorization": f"Bearer {api_token}",
-                        "Accept": "application/octet-stream",
-                    })
-                    with urlopen(val_req) as vr:
-                        raw = vr.read()
+                    raw = _cf_get_kv_raw(api_token, account_id, ns_id, key)
                     decrypted = _age_decrypt(raw)
                     val_data = json.loads(decrypted)
                     expires = val_data.get("expires")
@@ -370,11 +400,13 @@ def cmd_push(args):
 
 
 def _resolve_args(args):
+    global _CF_COOKIE_FILE
+    _CF_COOKIE_FILE = args.cookie_file or os.environ.get("CF_COOKIE_FILE", "")
     api_token = args.api_token or os.environ.get("CLOUDFLARE_API_TOKEN", "")
     account_id = args.account_id or os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
     ns_id = args.namespace or os.environ.get("CLOUDFLARE_KV_NAMESPACE", "")
-    if not api_token:
-        print("Error: CLOUDFLARE_API_TOKEN required (env or --api-token)", file=sys.stderr)
+    if not api_token and not _CF_COOKIE_FILE:
+        print("Error: need CLOUDFLARE_API_TOKEN (or --api-token), or --cookie-file / CF_COOKIE_FILE", file=sys.stderr)
         sys.exit(1)
     if not account_id:
         print("Error: CLOUDFLARE_ACCOUNT_ID required (env or --account-id)", file=sys.stderr)
@@ -392,6 +424,7 @@ def main():
     p.add_argument("--api-token", help="Cloudflare API token (or CLOUDFLARE_API_TOKEN env)")
     p.add_argument("--account-id", help="Cloudflare account ID (or CLOUDFLARE_ACCOUNT_ID env)")
     p.add_argument("--namespace", "-n", help="KV namespace ID (or CLOUDFLARE_KV_NAMESPACE env)")
+    p.add_argument("--cookie-file", help="Cloudflare session cookie file (Netscape format, or CF_COOKIE_FILE env)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pg = sub.add_parser("generate", help="Create a new token")
