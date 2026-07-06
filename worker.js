@@ -311,7 +311,7 @@ async function handleLogin(request, env) {
   if (!token || typeof token !== 'string' || token.length < 8) {
     return renderLogin('Invalid token format.');
   }
-  // Hash token and look up in KV
+  // Hash token and look up in KV (value is age-encrypted blob, not parsed)
   const hash = await sha256Hex(token);
   let entry;
   try { entry = await env.TOKENS.get(`tok_${hash}`); } catch { entry = null; }
@@ -319,17 +319,7 @@ async function handleLogin(request, env) {
     await recordAttempt(env, ip);
     return renderLogin('Invalid token.');
   }
-  let data;
-  try { data = JSON.parse(entry); } catch {
-    return renderLogin('Invalid token.');
-  }
-  // Check expiry
-  if (data.expires && Date.now() / 1000 > data.expires) {
-    return renderLogin('Token has expired.');
-  }
-  // Update last_used
-  data.last_used = Math.floor(Date.now() / 1000);
-  await env.TOKENS.put(`tok_${hash}`, JSON.stringify(data));
+  // KV TTL handles expiry automatically — if the key exists, it's valid
   // Create session
   const { cookie, expires } = await createSessionCookie(env.SESSION_SECRET);
   const url = new URL(request.url);

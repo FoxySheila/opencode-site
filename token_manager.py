@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """token_manager.py — manage access tokens in Cloudflare Workers KV.
-
+Tokens: BLAKE3 hashed (via quichash binary), age-encrypted at rest.
 Uses the Cloudflare API directly (no wrangler needed for token ops).
 Requires: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID env vars, or
           --api-token and --account-id flags.
 
 Commands:
-  generate     Create a new token and store it in KV
-  list         List all stored tokens
+  generate     Create a new token, age-encrypt it, store in KV
+  list         List all stored tokens (decrypts age payloads)
   revoke       Delete a token from KV
-  cleanup      Remove expired tokens
+  cleanup      Remove expired tokens (KV TTL does this, but for safety)
   push         Push a list of tokens from a file
 """
 import argparse
@@ -17,11 +17,21 @@ import hashlib
 import json
 import os
 import secrets
+import subprocess
 import sys
 import time
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
+
+# ── Paths ──
+
+_BIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
+_QUICHASH = os.path.join(_BIN_DIR, "checksum", "quichash", "quichash")
+_AGE = os.path.join(_BIN_DIR, "age", "age")
+_AGE_KEYGEN = os.path.join(_BIN_DIR, "age", "age-keygen")
+_SITE_AGEKEY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site.agekey")
+_SITE_AGEPUB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site.agepub")
 
 # ── Config ──
 
@@ -69,13 +79,76 @@ def _cf_delete(token, path):
         return json.loads(r.read())
 
 
+def _cf_put_kv(api_token, account_id, ns_id, key, value, expiration=None):
+    """Store a value in KV with optional TTL (expiration = Unix timestamp)."""
+    path = f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}"
+    params = {}
+    if expiration:
+        params["expiration"] = str(int(expiration))
+    if params:
+        path += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+    body = value if isinstance(value, bytes) else json.dumps(value).encode()
+    req = Request(f"{API_BASE}{path}", data=body, headers={
+        **{"Authorization": f"Bearer {api_token}"}, "Content-Type": "application/octet-stream",
+    }, method="PUT")
+    with urlopen(req) as r:
+        return json.loads(r.read())
+
+
+# ── BLAKE3 via quichash ──
+
+def _blake3(data: bytes) -> str:
+    """Hash data with BLAKE3 via quichash binary. Returns hex string."""
+    if not os.path.isfile(_QUICHASH):
+        raise RuntimeError(f"quichash not found at {_QUICHASH}")
+    r = subprocess.run([_QUICHASH, "-a", "BLAKE3"], input=data,
+                       capture_output=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(f"quichash failed: {r.stderr.decode(errors='replace')[:200]}")
+    return r.stdout.decode(errors='replace').strip().split()[0]
+
+
+# ── Age encryption ──
+
+def _age_pubkey() -> str:
+    """Get the site's age public key."""
+    if os.path.isfile(_SITE_AGEPUB):
+        with open(_SITE_AGEPUB) as f:
+            return f.read().strip()
+    raise RuntimeError(f"site.agepub not found at {_SITE_AGEPUB}")
+
+
+def _age_encrypt(data: bytes) -> bytes:
+    """Encrypt data with the site's age public key."""
+    pubkey = _age_pubkey()
+    r = subprocess.run([_AGE, "-e", "-r", pubkey], input=data,
+                       capture_output=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(f"age encrypt failed: {r.stderr.decode(errors='replace')[:200]}")
+    return r.stdout
+
+
+def _age_decrypt(data: bytes) -> bytes:
+    """Decrypt data with the site's age private key."""
+    if not os.path.isfile(_SITE_AGEKEY):
+        raise RuntimeError(f"site.agekey not found at {_SITE_AGEKEY}")
+    r = subprocess.run([_AGE, "-d", "-i", _SITE_AGEKEY], input=data,
+                       capture_output=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(f"age decrypt failed: {r.stderr.decode(errors='replace')[:200]}")
+    return r.stdout
+
+
+# ── Helpers ──
+
 def _token_hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _generate_token(length=32):
-    raw = secrets.token_bytes(length)
-    return "opc_" + hashlib.blake2s(raw, digest_size=20).hexdigest()[:24]
+def _generate_token():
+    raw = secrets.token_bytes(32)
+    b3 = _blake3(raw)
+    return "opc_" + b3[:24]
 
 
 def _parse_duration(s):
@@ -97,33 +170,48 @@ def _fmt_ts(ts):
     return time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts))
 
 
+def _resolve_age():
+    if not os.path.isfile(_SITE_AGEKEY):
+        print("No site.agekey found. Run: ./bin/age/age-keygen -o site.agekey")
+        sys.exit(1)
+    if not os.path.isfile(_SITE_AGEPUB):
+        print("No site.agepub found. Run: ./bin/age/age-keygen -y site.agekey > site.agepub")
+        sys.exit(1)
+
+
 # ── Commands ──
 
 def cmd_generate(args):
+    _resolve_age()
     api_token, account_id, ns_id = _resolve_args(args)
     token = args.token or _generate_token()
     label = args.label or "unnamed"
     now = int(time.time())
     expires = args.expires or (now + _parse_duration(args.duration))
-    entry = {
+    meta = {
         "label": label,
         "created": now,
         "expires": expires,
         "last_used": None,
     }
+    encrypted = _age_encrypt(json.dumps(meta).encode())
     key = f"tok_{_token_hash(token)}"
-    _cf_put(api_token, f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}", json.dumps(entry))
+    ttl = None
+    if expires:
+        ttl = expires - int(time.time())
+    _cf_put_kv(api_token, account_id, ns_id, key, encrypted, expiration=expires if expires else None)
     print(f"Token:     {token}")
     print(f"Label:     {label}")
     print(f"Created:   {_fmt_ts(now)}")
     print(f"Expires:   {_fmt_ts(expires)}")
     print(f"KV Key:    {key}")
+    print(f"Encrypted: {len(encrypted)} bytes (age)")
     return token
 
 
 def cmd_list(args):
+    _resolve_age()
     api_token, account_id, ns_id = _resolve_args(args)
-    # KV list API is paginated
     cursor = None
     tokens = []
     while True:
@@ -137,15 +225,19 @@ def cmd_list(args):
         for key_info in resp.get("result", []):
             key = key_info["name"]
             if key.startswith("tok_"):
-                # Fetch value
                 val_path = f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}"
                 try:
-                    val_req = Request(f"{API_BASE}{val_path}", headers=_headers(api_token))
+                    val_req = Request(f"{API_BASE}{val_path}", headers={
+                        "Authorization": f"Bearer {api_token}",
+                        "Accept": "application/octet-stream",
+                    })
                     with urlopen(val_req) as vr:
-                        val_data = json.loads(vr.read())
+                        raw = vr.read()
+                    decrypted = _age_decrypt(raw)
+                    val_data = json.loads(decrypted)
                     tokens.append((key, val_data))
                 except Exception as e:
-                    print(f"  {key}: error reading: {e}", file=sys.stderr)
+                    tokens.append((key, {"label": f"<decrypt error: {e}>", "created": 0, "expires": 0}))
         cursor = resp.get("result_info", {}).get("cursor")
         if not cursor:
             break
@@ -202,9 +294,14 @@ def cmd_cleanup(args):
             if key.startswith("tok_"):
                 val_path = f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}"
                 try:
-                    val_req = Request(f"{API_BASE}{val_path}", headers=_headers(api_token))
+                    val_req = Request(f"{API_BASE}{val_path}", headers={
+                        "Authorization": f"Bearer {api_token}",
+                        "Accept": "application/octet-stream",
+                    })
                     with urlopen(val_req) as vr:
-                        val_data = json.loads(vr.read())
+                        raw = vr.read()
+                    decrypted = _age_decrypt(raw)
+                    val_data = json.loads(decrypted)
                     expires = val_data.get("expires")
                     if expires and now > expires:
                         _cf_delete(api_token, f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}")
@@ -219,7 +316,7 @@ def cmd_cleanup(args):
 
 
 def cmd_push(args):
-    """Push tokens from a file (one per line, format: token label)."""
+    _resolve_age()
     api_token, account_id, ns_id = _resolve_args(args)
     now = int(time.time())
     default_duration = _parse_duration(args.duration)
@@ -232,14 +329,16 @@ def cmd_push(args):
             parts = line.split(maxsplit=1)
             token = parts[0]
             label = parts[1] if len(parts) > 1 else ""
-            entry = {
+            meta = {
                 "label": label,
                 "created": now,
                 "expires": now + default_duration,
                 "last_used": None,
             }
+            encrypted = _age_encrypt(json.dumps(meta).encode())
             key = f"tok_{_token_hash(token)}"
-            _cf_put(api_token, f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}", json.dumps(entry))
+            _cf_put_kv(api_token, account_id, ns_id, key, encrypted,
+                       expiration=now + default_duration)
             print(f"  + {key} ({label or token[:16]}...)")
             added += 1
     print(f"✓ {added} tokens pushed to KV.")

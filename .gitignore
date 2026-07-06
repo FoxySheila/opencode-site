@@ -3,3 +3,4 @@ __pycache__/
 .env
 .dev.vars
 *.stego.png
+site.agekey

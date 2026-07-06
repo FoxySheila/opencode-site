@@ -24,8 +24,18 @@ import time
 
 from stego import embed_all_into_png, extract_all_from_png
 
+_QUICHASH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "checksum", "quichash", "quichash")
+
 
 # ── helpers ──
+
+def _blake3(data: bytes) -> str:
+    r = subprocess.run([_QUICHASH, "-a", "BLAKE3"], input=data,
+                       capture_output=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(f"quichash: {r.stderr.decode(errors='replace')[:200]}")
+    return r.stdout.decode(errors='replace').strip().split()[0]
+
 
 def _parse_duration(s: str) -> int:
     """Parse duration string like '7d', '30d', '24h', '1m' → seconds."""
@@ -42,9 +52,9 @@ def _parse_duration(s: str) -> int:
 
 
 def _generate_token(length: int = 32) -> str:
-    """Generate a cryptographically random token."""
+    """Generate a cryptographically random token (BLAKE3 via quichash)."""
     raw = secrets.token_bytes(length)
-    return "opc_" + hashlib.blake2s(raw, digest_size=20).hexdigest()[:24]
+    return "opc_" + _blake3(raw)[:24]
 
 
 def _format_expiry(expires_ts: float | None) -> str:
