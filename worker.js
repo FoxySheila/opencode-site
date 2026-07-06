@@ -15,7 +15,7 @@ const LOGIN_PAGE = `<!DOCTYPE html>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:#0d0d0f;color:#cfcecd;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif}
 body{display:flex;align-items:center;justify-content:center;min-height:100vh}
-.login-container{text-align:center;padding:2rem;max-width:400px;width:100%}
+.login-container{text-align:center;padding:2rem;max-width:420px;width:100%}
 .logo{margin-bottom:1.5rem}
 .logo svg{width:180px;height:auto}
 h1{font-size:1.25rem;font-weight:500;color:#8a8a8a;margin-bottom:2rem;letter-spacing:.02em}
@@ -27,6 +27,14 @@ h1{font-size:1.25rem;font-weight:500;color:#8a8a8a;margin-bottom:2rem;letter-spa
 .error{background:#2d1517;border:1px solid #5c2024;color:#f87171;border-radius:8px;padding:.75rem 1rem;font-size:.875rem;margin-bottom:1rem}
 .footer{margin-top:2rem;font-size:.75rem;color:#52525b}
 .status-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#22c55e;margin-right:4px;vertical-align:middle}
+.or-divider{display:flex;align-items:center;gap:.75rem;margin:.75rem 0;color:#52525b;font-size:.8rem}
+.or-divider::before,.or-divider::after{content:"";flex:1;height:1px;background:#1a1a1e}
+.stego-upload{position:relative}
+.stego-upload input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+.stego-upload label{display:block;background:#1a1a1e;border:1px dashed #2a2a2e;border-radius:8px;padding:.75rem;font-size:.85rem;color:#636363;transition:all .2s;cursor:pointer}
+.stego-upload label:hover,.stego-upload label.dragover{border-color:#636363;color:#8a8a8a}
+.stego-upload label.done{border-color:#22c55e;color:#22c55e}
+#stego-status{font-size:.75rem;color:#636363;margin-top:-.25rem;min-height:1.2em}
 </style>
 </head>
 <body>
@@ -52,11 +60,124 @@ h1{font-size:1.25rem;font-weight:500;color:#8a8a8a;margin-bottom:2rem;letter-spa
   <h1>Enter your access token</h1>
   {{ERROR_HTML}}
   <form class="token-form" method="post" action="/login">
-    <input type="password" name="token" placeholder="Paste your token" autofocus required spellcheck="false" autocomplete="off">
+    <input type="password" name="token" id="token-input" placeholder="Paste your token" autofocus required spellcheck="false" autocomplete="off">
     <button type="submit">Continue</button>
   </form>
+  <div class="or-divider">or</div>
+  <div class="stego-upload">
+    <input type="file" id="stego-file" accept="image/png,image/jpeg,image/webp">
+    <label for="stego-file" id="stego-label">Upload a stego image to extract token</label>
+  </div>
+  <div id="stego-status"></div>
   <div class="footer"><span class="status-dot"></span>OpenCode Private Access</div>
 </div>
+<script>
+// ── CRUN TLV stego extraction (client-side) ──
+const CRUN_MAGIC = new Uint8Array([0x43,0x52,0x55,0x4E]); // "CRUN"
+
+function readU16LE(buf, off) { return buf[off] | (buf[off+1] << 8); }
+function readU32LE(buf, off) { return buf[off] | (buf[off+1]<<8) | (buf[off+2]<<16) | (buf[off+3]<<24); }
+
+async function lsbExtractToken(pixels, w, h) {
+  // Extract LSB bits from R,G,B channels (3 bits/pixel), MSB first
+  const bits = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      bits.push(pixels[i]   & 1);   // R
+      bits.push(pixels[i+1] & 1);   // G
+      bits.push(pixels[i+2] & 1);   // B
+    }
+  }
+  if (bits.length < 32) return null;
+
+  const toBytes = (start, count) => {
+    const b = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+      let byte = 0;
+      for (let j = 0; j < 8; j++) byte = (byte << 1) | bits[start + i*8 + j];
+      b[i] = byte;
+    }
+    return b;
+  };
+
+  const metaLen = readU32LE(toBytes(0, 4), 0);
+  const totalBits = 32 + (metaLen + 4) * 8;
+  if (bits.length < totalBits) return null;
+
+  const raw = toBytes(32, metaLen + 4);
+  const payload = new Uint8Array(raw.slice(0, metaLen));
+  const checksum = raw.slice(metaLen, metaLen + 4);
+
+  // Verify sha256 checksum
+  const hash = await crypto.subtle.digest('SHA-256', payload);
+  const h = new Uint8Array(hash);
+  if (h[0] !== checksum[0] || h[1] !== checksum[1] ||
+      h[2] !== checksum[2] || h[3] !== checksum[3]) return null;
+
+  // Validate CRUN magic
+  if (payload[0] !== CRUN_MAGIC[0] || payload[1] !== CRUN_MAGIC[1] ||
+      payload[2] !== CRUN_MAGIC[2] || payload[3] !== CRUN_MAGIC[3]) return null;
+
+  // Parse TLV entries
+  let off = 4;
+  const count = readU32LE(payload, off); off += 4;
+  for (let i = 0; i < count; i++) {
+    if (off + 2 > payload.length) break;
+    const nameLen = readU16LE(payload, off); off += 2;
+    if (off + nameLen + 4 > payload.length) break;
+    const name = new TextDecoder().decode(payload.slice(off, off + nameLen));
+    off += nameLen;
+    const dataLen = readU32LE(payload, off); off += 4;
+    if (off + dataLen > payload.length) break;
+    if (name === '.token') {
+      return new TextDecoder().decode(payload.slice(off, off + dataLen));
+    }
+    off += dataLen;
+  }
+  return null;
+}
+
+document.getElementById('stego-file').addEventListener('change', async function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('stego-status');
+  const label = document.getElementById('stego-label');
+  status.textContent = 'Reading image...';
+  label.textContent = file.name;
+  label.className = '';
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const token = await lsbExtractToken(imgData.data, canvas.width, canvas.height);
+
+    if (token && token.startsWith('opc_')) {
+      document.getElementById('token-input').value = token;
+      label.className = 'done';
+      label.textContent = '✓ ' + file.name;
+      status.textContent = 'Token extracted ✓ — click Continue';
+      // Auto-submit after brief delay
+      setTimeout(() => document.querySelector('.token-form button').click(), 600);
+    } else {
+      label.className = '';
+      label.textContent = '✗ No token found in image';
+      status.textContent = 'Not a valid stego image, or token format unrecognized.';
+    }
+  } catch(err) {
+    label.className = '';
+    label.textContent = '✗ Error reading image';
+    status.textContent = err.message;
+  }
+});
+</script>
 </body>
 </html>`;
 

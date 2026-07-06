@@ -4,3 +4,4 @@ __pycache__/
 .dev.vars
 *.stego.png
 site.agekey
+stego_output/
