@@ -35,7 +35,7 @@ from stego import embed_all_into_png, extract_all_from_png
 
 _PROJECT_DIR = Path(__file__).parent
 _TEMPLATES_DIR = _PROJECT_DIR / "templates"
-_IMAGES_DIR = _PROJECT_DIR / "images"
+_POOL_DIR = _PROJECT_DIR / "pool"
 _STEGO_DIR = _PROJECT_DIR / "stego_output"
 _BIN_DIR = _PROJECT_DIR / "bin"
 
@@ -285,7 +285,7 @@ class BrowseScreen(ModalScreen):
 
     def __init__(self, start_dir: str = ""):
         super().__init__()
-        self._start_dir = start_dir or str(_TEMPLATES_DIR)
+        self._start_dir = start_dir or str(_POOL_DIR)
         self._selected = None
 
     def compose(self):
@@ -477,7 +477,7 @@ class TokenApp(App):
                     yield Button(" Open Output Folder ", id="btn-open-out")
 
             yield Static(
-                f"Stego output: [bold]{_STEGO_DIR}[/]",
+                f"pool/: [bold]{_POOL_DIR}[/]   →   stego_output/: [bold]{_STEGO_DIR}[/]",
                 id="stego-dir-hint",
             )
 
@@ -652,9 +652,7 @@ class TokenApp(App):
         lv = self.query_one("#image-list", ListView)
         lv.clear()
         self._images = []
-        sources = [_TEMPLATES_DIR]
-        if _IMAGES_DIR.exists():
-            sources.append(_IMAGES_DIR)
+        sources = [_TEMPLATES_DIR, _POOL_DIR]
         img_exts = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp'}
         seen = set()
         for src_dir in sources:
@@ -668,7 +666,7 @@ class TokenApp(App):
                     item = ListItem(Label(f"  {f.name}  ({sz})"), _path=str(f))
                     lv.append(item)
         if not self._images:
-            lv.append(ListItem(Label("  [dim](drop images in templates/ folder)[/]", _path="")))
+            lv.append(ListItem(Label("  [dim](drop images in pool/ or templates/)[/]", _path="")))
 
     @on(ListView.Selected, "#image-list")
     def on_image_selected(self, event):
@@ -712,8 +710,8 @@ class TokenApp(App):
     def _on_browse_done(self, result):
         if result:
             self._selected_image = result
-            # Add to templates for future use
-            dst = _TEMPLATES_DIR / Path(result).name
+            # Copy into pool for future use
+            dst = _POOL_DIR / Path(result).name
             if not dst.exists():
                 try:
                     shutil.copy2(result, dst)

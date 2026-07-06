@@ -18,7 +18,9 @@ Friend → opencode-site.<your-subdomain>.workers.dev
 - **token_manager.py** — CLI to create/revoke tokens in KV
 - **token_img.py** — embed/extract tokens in images via steganography
 - **stego/** — Star Collapser's LSB steganography engine (3 bits/pixel RGB)
-- **templates/** — Drop images here for the dashboard to pick from
+- **pool/** — Drop source images here (the dashboard loads from this folder)
+- **templates/** — Bundled default images
+- **stego_output/** — Generated stego PNGs land here (auto-created)
 
 ## Quick Start: Dashboard
 
