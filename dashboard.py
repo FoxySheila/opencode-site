@@ -146,49 +146,104 @@ def _ensure_dirs():
 
 # ── File browser ──
 
-def _list_images(directory: Path) -> list[Path]:
-    exts = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff'}
+_IMG_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff'}
+
+
+def _list_entries(directory: Path):
+    """Return (dirs, images) sorted from a directory."""
     if not directory.is_dir():
-        return []
-    return sorted(
-        [f for f in directory.iterdir() if f.suffix.lower() in exts],
-        key=lambda p: p.name.lower()
-    )
+        return [], []
+    dirs, imgs = [], []
+    for f in sorted(directory.iterdir(), key=lambda p: p.name.lower()):
+        if f.name.startswith('.'):
+            continue
+        if f.is_dir():
+            dirs.append(f)
+        elif f.suffix.lower() in _IMG_EXTS:
+            imgs.append(f)
+    return dirs, imgs
 
 
-def _browse_dir(directory: Path, label: str) -> Path | None:
-    """Show files in a directory, let user pick one. Returns Path or None."""
-    images = _list_images(directory)
-    if not images:
-        warn(f"No images found in {label}")
+def _browse_tree(start: Path, label: str) -> Path | None:
+    """Navigable tree browser: drill into dirs, pick an image. Returns Path or None."""
+    current = start.resolve()
+    history = []
+
+    while True:
+        dirs, imgs = _list_entries(current)
+        print(f"\n  {C.BOLD}{label}{C.RESET}  {C.DIM}{current}{C.RESET}\n")
+        idx = 0
+        # Directories first
+        for d in dirs:
+            idx += 1
+            print(f"    {C.CYAN}{idx:2}){C.RESET}  \033[1m{d.name}/\033[0m")
+        sep = idx
+        for img in imgs:
+            idx += 1
+            sz = _fmt_size(img.stat().st_size)
+            print(f"    {C.CYAN}{idx:2}){C.RESET}  {img.name}  {C.DIM}({sz}){C.RESET}")
+        print()
+        print(f"    {C.DIM}b) back  s) select this dir  q) quit{C.RESET}")
+
+        raw = input(f"  {C.CYAN}>{C.RESET}: ").strip().lower()
+        if raw == 'q':
+            return None
+        if raw == 'b':
+            if history:
+                current = history.pop()
+            continue
+        if raw == 's':
+            # Select the current directory as the image source
+            if imgs:
+                # Just show the directory contents and let user pick
+                continue
+            warn("No images in this directory")
+            continue
+        try:
+            n = int(raw)
+            if 1 <= n <= len(dirs):
+                history.append(current)
+                current = dirs[n - 1]
+            elif len(dirs) < n <= len(dirs) + len(imgs):
+                return imgs[n - len(dirs) - 1]
+        except ValueError:
+            pass
+
+
+def _browse_pool(directory: Path, label: str) -> Path | None:
+    """Simple flat listing for pool/templates (no subdir drill)."""
+    _, imgs = _list_entries(directory)
+    if not imgs:
+        warn(f"No images in {label}")
         input(f"  {C.DIM}Press Enter to continue{C.RESET}")
         return None
 
-    print(f"\n  {C.BOLD}{label}{C.RESET}\n")
-    for i, img in enumerate(images, 1):
+    print(f"\n  {C.BOLD}{label}{C.RESET}  {C.DIM}{directory}{C.RESET}\n")
+    for i, img in enumerate(imgs, 1):
         sz = _fmt_size(img.stat().st_size)
         print(f"    {C.CYAN}{i:2}){C.RESET}  {img.name}  {C.DIM}({sz}){C.RESET}")
     print()
 
     while True:
-        raw = input(f"  {C.CYAN}>{C.RESET} Select image (1-{len(images)}, or {C.DIM}q{C.RESET} to cancel): ").strip()
+        raw = input(f"  {C.CYAN}>{C.RESET} Select image (1-{len(imgs)}, or {C.DIM}q{C.RESET} to cancel): ").strip()
         if raw.lower() == 'q':
             return None
         try:
             idx = int(raw) - 1
-            if 0 <= idx < len(images):
-                return images[idx]
+            if 0 <= idx < len(imgs):
+                return imgs[idx]
         except ValueError:
             pass
 
 
 def browse_file() -> Path | None:
-    """Pick image from pool or templates directory."""
+    """Pick image from pool, templates, or filesystem tree."""
     while True:
         header("Select an Image")
         print(f"  {C.BOLD}Choose a source:{C.RESET}\n")
         print(f"    {C.CYAN}1){C.RESET}  Pool  {C.DIM}({_pool_dir()}){C.RESET}")
         print(f"    {C.CYAN}2){C.RESET}  Templates  {C.DIM}({_templates_dir()}){C.RESET}")
+        print(f"    {C.CYAN}3){C.RESET}  Browse filesystem")
         print(f"    {C.CYAN}q){C.RESET}  Quit\n")
 
         choice = input(f"  {C.CYAN}>{C.RESET} Choice: ").strip().lower()
@@ -196,11 +251,22 @@ def browse_file() -> Path | None:
         if choice == 'q':
             return None
         elif choice == '1':
-            result = _browse_dir(_pool_dir(), f"══ pool/ ══")
+            result = _browse_pool(_pool_dir(), "══ pool/ ══")
             if result:
                 return result
         elif choice == '2':
-            result = _browse_dir(_templates_dir(), f"══ templates/ ══")
+            result = _browse_pool(_templates_dir(), "══ templates/ ══")
+            if result:
+                return result
+        elif choice == '3':
+            path = input(f"  {C.CYAN}>{C.RESET} Start directory {C.DIM}[.]{C.RESET}: ").strip()
+            if not path:
+                path = "."
+            p = Path(path).expanduser().resolve()
+            if not p.is_dir():
+                warn(f"Not a directory: {path}")
+                continue
+            result = _browse_tree(p, "══ filesystem ══")
             if result:
                 return result
 
