@@ -21,11 +21,45 @@ from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor
 from stego import embed_all_into_png
 
 _PROJECT_DIR = Path(__file__).parent
-_POOL_DIR = _PROJECT_DIR / "pool"
-_STEGO_DIR = _PROJECT_DIR / "stego_output"
 _BIN_DIR = _PROJECT_DIR / "bin"
 _QUICHASH = _BIN_DIR / "checksum" / "quichash" / "quichash"
 _AGE = _BIN_DIR / "age" / "age"
+
+# ── Config ──
+
+_CONFIG_PATH = Path.home() / ".config" / "opencode-site.json"
+
+_DEFAULTS = {
+    "pool_dir": str(_PROJECT_DIR / "pool"),
+    "templates_dir": str(_PROJECT_DIR / "templates"),
+    "stego_output_dir": str(_PROJECT_DIR / "stego_output"),
+}
+
+_config = None
+
+def _load_config():
+    global _config
+    if _config is not None:
+        return _config
+    cfg = dict(_DEFAULTS)
+    if _CONFIG_PATH.exists():
+        try:
+            with open(_CONFIG_PATH) as f:
+                user = json.load(f)
+            cfg.update({k: v for k, v in user.items() if k in _DEFAULTS})
+        except (json.JSONDecodeError, OSError):
+            pass
+    _config = cfg
+    return cfg
+
+def _pool_dir():
+    return Path(_load_config()["pool_dir"])
+
+def _templates_dir():
+    return Path(_load_config()["templates_dir"])
+
+def _stego_dir():
+    return Path(_load_config()["stego_output_dir"])
 
 
 # ── ANSI helpers (blessed-style, no dep needed) ──
@@ -104,6 +138,12 @@ def _fmt_size(n: int) -> str:
     return f"{n:.1f} TB"
 
 
+def _ensure_dirs():
+    _stego_dir().mkdir(parents=True, exist_ok=True)
+    _templates_dir().mkdir(parents=True, exist_ok=True)
+    _pool_dir().mkdir(parents=True, exist_ok=True)
+
+
 # ── File browser ──
 
 def _list_images(directory: Path) -> list[Path]:
@@ -143,13 +183,12 @@ def _browse_dir(directory: Path, label: str) -> Path | None:
 
 
 def browse_file() -> Path | None:
-    """Full file browser: pool/ → templates/ → filesystem → pick image."""
+    """Pick image from pool or templates directory."""
     while True:
         header("Select an Image")
         print(f"  {C.BOLD}Choose a source:{C.RESET}\n")
-        print(f"    {C.CYAN}1){C.RESET}  Pool  {C.DIM}({_POOL_DIR}){C.RESET}")
-        print(f"    {C.CYAN}2){C.RESET}  Templates  {C.DIM}({_PROJECT_DIR / 'templates'}){C.RESET}")
-        print(f"    {C.CYAN}3){C.RESET}  Browse filesystem")
+        print(f"    {C.CYAN}1){C.RESET}  Pool  {C.DIM}({_pool_dir()}){C.RESET}")
+        print(f"    {C.CYAN}2){C.RESET}  Templates  {C.DIM}({_templates_dir()}){C.RESET}")
         print(f"    {C.CYAN}q){C.RESET}  Quit\n")
 
         choice = input(f"  {C.CYAN}>{C.RESET} Choice: ").strip().lower()
@@ -157,24 +196,13 @@ def browse_file() -> Path | None:
         if choice == 'q':
             return None
         elif choice == '1':
-            result = _browse_dir(_POOL_DIR, f"══ pool/ ══")
+            result = _browse_dir(_pool_dir(), f"══ pool/ ══")
             if result:
                 return result
         elif choice == '2':
-            result = _browse_dir(_PROJECT_DIR / "templates", f"══ templates/ ══")
+            result = _browse_dir(_templates_dir(), f"══ templates/ ══")
             if result:
                 return result
-        elif choice == '3':
-            path = input(f"  {C.CYAN}>{C.RESET} Directory path: ").strip()
-            if path:
-                p = Path(path).expanduser().resolve()
-                if p.is_dir():
-                    result = _browse_dir(p, f"══ {path} ══")
-                    if result:
-                        return result
-                else:
-                    warn(f"Not a directory: {path}")
-        # loop back
 
 
 # ── Duration picker ──
@@ -288,8 +316,8 @@ def store_in_kv(api_token: str, account_id: str, ns_id: str,
 # ── Main wizard ──
 
 def main():
-    _STEGO_DIR.mkdir(parents=True, exist_ok=True)
-    (_PROJECT_DIR / "templates").mkdir(parents=True, exist_ok=True)
+    _load_config()
+    _ensure_dirs()
 
     # ── 1. Browse for image ──
     image = browse_file()
@@ -298,7 +326,7 @@ def main():
         return
 
     # Copy to pool for future use
-    pool_dst = _POOL_DIR / image.name
+    pool_dst = _pool_dir() / image.name
     if image != pool_dst and not pool_dst.exists():
         try:
             shutil.copy2(str(image), str(pool_dst))
@@ -380,7 +408,7 @@ def main():
     # ── 7. Embed into image ──
     safe_label = "".join(c if c.isalnum() else "_" for c in label)
     out_name = f"{safe_label}_{time.strftime('%Y%m%d_%H%M%S')}.png"
-    out_path = str(_STEGO_DIR / out_name)
+    out_path = str(_stego_dir() / out_name)
 
     print(f"  {C.DIM}Embedding token into {image.name}...{C.RESET}")
     payloads = {".token": token.encode(), ".label": label.encode()}
@@ -409,13 +437,37 @@ def main():
     print()
 
     # Save token to a text file too
-    tok_file = _STEGO_DIR / f"{safe_label}_{time.strftime('%Y%m%d_%H%M%S')}.token"
+    tok_file = _stego_dir() / f"{safe_label}_{time.strftime('%Y%m%d_%H%M%S')}.token"
     tok_file.write_text(f"Token: {token}\nLabel: {label}\nExpires: {expires_display}\nMax uses: {uses_display}\n")
     print(f"  {C.DIM}Token info saved: {tok_file}{C.RESET}")
     print()
 
 
+def show_config():
+    cfg = _load_config()
+    print(f"\n  {C.DIM}Config: {_CONFIG_PATH}{C.RESET}")
+    for k, v in cfg.items():
+        print(f"    {k}: {v}")
+    print()
+
+
 if __name__ == "__main__":
+    import argparse
+    p = argparse.ArgumentParser(description="Generate tokens with stego images")
+    p.add_argument("--config", action="store_true", help="Show current config and exit")
+    p.add_argument("--pool", help="Override pool directory for this session")
+    p.add_argument("--templates", help="Override templates directory for this session")
+    p.add_argument("--stego-output", help="Override stego output directory for this session")
+    a = p.parse_args()
+    if a.config:
+        show_config()
+        sys.exit(0)
+    if a.pool:
+        _load_config()["pool_dir"] = a.pool
+    if a.templates:
+        _load_config()["templates_dir"] = a.templates
+    if a.stego_output:
+        _load_config()["stego_output_dir"] = a.stego_output
     try:
         main()
     except KeyboardInterrupt:

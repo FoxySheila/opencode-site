@@ -137,6 +137,7 @@ footer{text-align:center;padding:2rem 0;border-top:1px solid #1a1a1e;font-size:.
   <div class="links">
     <a href="https://opencode.ai">opencode.ai</a>
     <a href="https://github.com/anomalyco/opencode">GitHub</a>
+    <span style="color:#636363;font-size:.75rem;padding:0 .5rem">session: {{TOKEN_HASH}}</span>
     <a href="/logout">Logout</a>
   </div>
 </nav>
@@ -227,25 +228,34 @@ async function sha256Hex(input) {
 
 // ── Session cookie management (stateless HMAC) ──
 
-async function createSessionCookie(secret) {
+// Session cookie embeds the token hash so each token has its own session.
+// Payload: base64(expiry:tokenHash) . hmac
+// Different tokens → different cookies → isolated sessions.
+
+async function createSessionCookie(secret, tokenHash) {
   const expires = Math.floor(Date.now() / 1000) + 30 * 86400; // 30 days
-  const payload = `${expires}`;
-  const sig = await hmacSha256(secret, payload + ':opencode');
+  const payload = `${expires}:${tokenHash}`;
+  const sig = await hmacSha256(secret, payload);
   const cookie = btoa(payload).replace(/=+$/, '') + '.' + sig;
-  return { cookie, expires };
+  return { cookie, expires, tokenHash };
 }
 
+// Returns { valid, tokenHash } or { valid: false }
 async function validateSession(cookie, secret) {
-  if (!cookie || !cookie.includes('.')) return false;
-  const [encodedExpiry, sig] = cookie.split('.');
-  let expiry;
+  if (!cookie || !cookie.includes('.')) return { valid: false };
+  const [encodedPayload, sig] = cookie.split('.');
+  let payload;
   try {
-    expiry = parseInt(atob(encodedExpiry), 10);
-  } catch { return false; }
-  if (Date.now() / 1000 > expiry) return false;
-  const expectedSig = await hmacSha256(secret, `${expiry}:opencode`);
-  if (sig !== expectedSig) return false;
-  return true;
+    payload = atob(encodedPayload);
+  } catch { return { valid: false }; }
+  const colon = payload.lastIndexOf(':');
+  if (colon < 0) return { valid: false };
+  const expiry = parseInt(payload.substring(0, colon), 10);
+  const tokenHash = payload.substring(colon + 1);
+  if (isNaN(expiry) || Date.now() / 1000 > expiry) return { valid: false };
+  const expectedSig = await hmacSha256(secret, payload);
+  if (sig !== expectedSig) return { valid: false };
+  return { valid: true, tokenHash };
 }
 
 // ── Rate limiting (KV-backed) ──
@@ -285,8 +295,9 @@ function renderLogin(error) {
   });
 }
 
-function renderSite() {
-  return new Response(SITE_PAGE, {
+function renderSite(tokenHash) {
+  const shortHash = tokenHash ? tokenHash.substring(0, 12) : 'unknown';
+  return new Response(SITE_PAGE.replace('{{TOKEN_HASH}}', shortHash), {
     headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' }
   });
 }
@@ -340,8 +351,8 @@ async function handleLogin(request, env) {
       // If parsing fails, allow through
     }
   }
-  // Create session
-  const { cookie, expires } = await createSessionCookie(env.SESSION_SECRET);
+  // Create session tied to this specific token
+  const { cookie, expires, tokenHash } = await createSessionCookie(env.SESSION_SECRET, hash);
   const url = new URL(request.url);
   const next = url.searchParams.get('next') || '/';
   return new Response(null, {
@@ -387,8 +398,9 @@ export default {
     const cookieHeader = request.headers.get('Cookie') || '';
     const match = cookieHeader.match(/(?:^|;\s*)opencode_session=([^;]+)/);
     const sessionCookie = match ? match[1] : null;
-    if (sessionCookie && await validateSession(sessionCookie, env.SESSION_SECRET)) {
-      return renderSite();
+    const session = sessionCookie ? await validateSession(sessionCookie, env.SESSION_SECRET) : { valid: false };
+    if (session.valid) {
+      return renderSite(session.tokenHash);
     }
     // Redirect to clean login URL
     if (path === '/') {

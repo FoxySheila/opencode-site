@@ -1,0 +1,5 @@
+{
+    "pool_dir": "/path/to/your/image/pool",
+    "templates_dir": "/path/to/your/templates",
+    "stego_output_dir": "/path/to/stego/output"
+}

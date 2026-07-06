@@ -1,8 +1,8 @@
-# Cloudflare session config for opencode-site
-# Source with: source .cfenv
+# OpenCode token manager env vars — Bash
+# Usage:  source .cfenv
 export CLOUDFLARE_ACCOUNT_ID="a6f30d8d5e0e04ee20747d91d62c232e"
 export CLOUDFLARE_KV_NAMESPACE="8753c35dccdb4222b88b115d745bd4d5"
 export CF_COOKIE_FILE="/home/deadfoxy/Desktop/cookies-cloudflare-com.txt"
 
-# Alias for convenience
 alias tokgen='source ~/.local/venvs/crystal/bin/activate && source .cfenv && python3 token_manager.py --cookie-file "$CF_COOKIE_FILE"'
+alias dashgen='source ~/.local/venvs/crystal/bin/activate && source .cfenv && python3 dashboard.py'
