@@ -13,10 +13,34 @@ Friend → opencode-site.<your-subdomain>.workers.dev
                  └─> Valid session → opencode info page
 ```
 
+- **dashboard.py** — TUI dashboard: browse images, manage tokens, generate+embed
 - **worker.js** — Cloudflare Worker: auth gate + HTML inline
 - **token_manager.py** — CLI to create/revoke tokens in KV
-- **token_img.py** — embed tokens into images via steganography
+- **token_img.py** — embed/extract tokens in images via steganography
 - **stego/** — Star Collapser's LSB steganography engine (3 bits/pixel RGB)
+- **templates/** — Drop images here for the dashboard to pick from
+
+## Quick Start: Dashboard
+
+```bash
+# Activate venv (needs textual, blessed)
+source ~/.local/venvs/crystal/bin/activate
+
+# Set Cloudflare credentials (for KV operations)
+export CLOUDFLARE_API_TOKEN="your-token"
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+export CLOUDFLARE_KV_NAMESPACE="your-kv-namespace-id"
+
+# Launch TUI
+python3 dashboard.py
+```
+
+The dashboard lets you:
+- Browse template images in `templates/` or browse the filesystem
+- See all tokens with their status
+- Generate a token + embed it into an image in one click
+- Revoke tokens
+- Open the stego output folder
 
 ## Setup
 
@@ -113,15 +137,21 @@ python3 token_manager.py push tokens.txt --duration 7d
 
 ## Files
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `worker.js` | ~310 | Cloudflare Worker (auth + content) |
-| `wrangler.toml` | ~15 | Worker config |
-| `token_manager.py` | ~280 | KV token CRUD CLI |
-| `token_img.py` | ~230 | Stego embed/extract/generate CLI |
-| `stego/__init__.py` | ~80 | Embed/extract payloads via LSB |
-| `stego/lsb.py` | ~77 | LSB primitives (3 bits/pixel RGB) |
+| File | Purpose |
+|------|---------|
+| `dashboard.py` | TUI dashboard: browse images, manage tokens, generate+embed |
+| `worker.js` | Cloudflare Worker (auth + site content) |
+| `token_manager.py` | CLI: CRUD tokens in Cloudflare Workers KV |
+| `token_img.py` | CLI: embed/extract/generate tokens in images via LSB stego |
+| `stego/__init__.py` | Embed/extract payloads via LSB (TLV/CRUN format) |
+| `stego/lsb.py` | LSB primitives (3 bits/pixel RGB, SHA256 integrity) |
+| `templates/` | Drop source images here for the dashboard |
+| `bin/checksum/quichash/quichash` | BLAKE3 hashing (bundled from Star Collapser) |
+| `bin/age/age` | Age encryption (bundled from Star Collapser) |
+| `site.agepub` | Site's age public key (for encrypting KV values) |
+| `site.agekey` | ⚠ Private key — **do not commit**, keep secure |
 
 ## Credits
 
 Stego engine ported from [Star Collapser](https://github.com/anomalyco/starcollapser).
+BLAKE3 via quichash, encryption via age.
