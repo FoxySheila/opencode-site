@@ -137,6 +137,8 @@ def cmd_generate(args):
         cmd = [sys.executable, tm, "generate", "--token", token, "--label", label]
         if expires:
             cmd += ["--expires", str(int(expires))]
+        if args.max_uses:
+            cmd += ["--max-uses", str(args.max_uses)]
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:
@@ -213,6 +215,7 @@ def main():
     pg.add_argument("output", nargs="?", help="Output PNG path (default: source_stego.png)")
     pg.add_argument("--label", default="unnamed", help="Label for who this token is for")
     pg.add_argument("--duration", default="30d", help="Token validity (e.g. 7d, 24h, 30d, never)")
+    pg.add_argument("--max-uses", type=int, default=0, help="Max uses (0=unlimited)")
 
     # batch
     pb = sub.add_parser("batch", help="Batch embed tokens into images")

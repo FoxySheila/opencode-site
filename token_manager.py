@@ -188,22 +188,26 @@ def cmd_generate(args):
     label = args.label or "unnamed"
     now = int(time.time())
     expires = args.expires or (now + _parse_duration(args.duration))
+    max_uses = args.max_uses
     meta = {
         "label": label,
         "created": now,
         "expires": expires,
-        "last_used": None,
+        "max_uses": max_uses,
+        "use_count": 0,
     }
     encrypted = _age_encrypt(json.dumps(meta).encode())
     key = f"tok_{_token_hash(token)}"
-    ttl = None
-    if expires:
-        ttl = expires - int(time.time())
+    uses_key = f"{key}:u"
     _cf_put_kv(api_token, account_id, ns_id, key, encrypted, expiration=expires if expires else None)
+    # Usage counter entry (plaintext, same TTL)
+    uses_data = json.dumps({"n": 0, "m": max_uses}).encode()
+    _cf_put_kv(api_token, account_id, ns_id, uses_key, uses_data, expiration=expires if expires else None)
     print(f"Token:     {token}")
     print(f"Label:     {label}")
     print(f"Created:   {_fmt_ts(now)}")
     print(f"Expires:   {_fmt_ts(expires)}")
+    print(f"Max uses:  {'unlimited' if max_uses == 0 else max_uses}")
     print(f"KV Key:    {key}")
     print(f"Encrypted: {len(encrypted)} bytes (age)")
     return token
@@ -245,18 +249,21 @@ def cmd_list(args):
         print("No tokens found.")
         return
     now = time.time()
-    print(f"{'Key':<48} {'Label':<20} {'Created':<18} {'Expires':<18} {'Status':<10}")
-    print("-" * 120)
+    print(f"{'Key':<48} {'Label':<18} {'Uses':<10} {'Created':<16} {'Expires':<16} {'Status':<10}")
+    print("-" * 125)
     for key, val in tokens:
         label = val.get("label", "")
         created = _fmt_ts(val.get("created"))
         expires = _fmt_ts(val.get("expires"))
         expires_ts = val.get("expires")
+        max_uses = val.get("max_uses", 0)
+        use_count = val.get("use_count", 0)
+        uses_str = f"{use_count}/{max_uses}" if max_uses else "unlimited"
         if expires_ts and now > expires_ts:
             status = "EXPIRED"
         else:
             status = "active"
-        print(f"{key:<48} {label:<20} {created:<18} {expires:<18} {status:<10}")
+        print(f"{key:<48} {label:<18} {uses_str:<10} {created:<16} {expires:<16} {status:<10}")
     print(f"\nTotal: {len(tokens)} tokens")
 
 
@@ -266,8 +273,14 @@ def cmd_revoke(args):
     key = args.key
     if not key:
         key = f"tok_{_token_hash(token)}"
+    uses_key = f"{key}:u"
     try:
         _cf_delete(api_token, f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}")
+        # Also delete usage counter
+        try:
+            _cf_delete(api_token, f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{uses_key}")
+        except HTTPError:
+            pass
         print(f"✓ Token revoked: {key}")
     except HTTPError as e:
         if e.code == 404:
@@ -305,6 +318,10 @@ def cmd_cleanup(args):
                     expires = val_data.get("expires")
                     if expires and now > expires:
                         _cf_delete(api_token, f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}")
+                        try:
+                            _cf_delete(api_token, f"/accounts/{account_id}/storage/kv/namespaces/{ns_id}/values/{key}:u")
+                        except HTTPError:
+                            pass
                         print(f"  Removed: {key} ({val_data.get('label', '')})")
                         removed += 1
                 except Exception:
@@ -320,26 +337,34 @@ def cmd_push(args):
     api_token, account_id, ns_id = _resolve_args(args)
     now = int(time.time())
     default_duration = _parse_duration(args.duration)
+    default_max_uses = args.max_uses
     added = 0
     with open(args.file) as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            parts = line.split(maxsplit=1)
+            parts = line.split(maxsplit=2)
             token = parts[0]
             label = parts[1] if len(parts) > 1 else ""
+            max_uses = int(parts[2]) if len(parts) > 2 else default_max_uses
             meta = {
                 "label": label,
                 "created": now,
                 "expires": now + default_duration,
-                "last_used": None,
+                "max_uses": max_uses,
+                "use_count": 0,
             }
             encrypted = _age_encrypt(json.dumps(meta).encode())
             key = f"tok_{_token_hash(token)}"
+            uses_key = f"{key}:u"
             _cf_put_kv(api_token, account_id, ns_id, key, encrypted,
                        expiration=now + default_duration)
-            print(f"  + {key} ({label or token[:16]}...)")
+            uses_data = json.dumps({"n": 0, "m": max_uses}).encode()
+            _cf_put_kv(api_token, account_id, ns_id, uses_key, uses_data,
+                       expiration=now + default_duration)
+            uses_str = f"max={max_uses}" if max_uses else "unlimited"
+            print(f"  + {key} ({label or token[:16]}...) {uses_str}")
             added += 1
     print(f"✓ {added} tokens pushed to KV.")
 
@@ -374,6 +399,7 @@ def main():
     pg.add_argument("--label", "-l", default="unnamed", help="Label for the token")
     pg.add_argument("--duration", "-d", default="30d", help="Validity duration (e.g. 7d, 24h, 30d)")
     pg.add_argument("--expires", type=int, help="Expiry Unix timestamp (overrides --duration)")
+    pg.add_argument("--max-uses", type=int, default=0, help="Max number of uses (0 = unlimited)")
 
     pl = sub.add_parser("list", help="List all tokens")
 
@@ -386,6 +412,7 @@ def main():
     pp = sub.add_parser("push", help="Push tokens from a file")
     pp.add_argument("file", help="File with one token per line (token [label])")
     pp.add_argument("--duration", "-d", default="30d", help="Default duration")
+    pp.add_argument("--max-uses", type=int, default=0, help="Default max uses (0=unlimited)")
 
     args = p.parse_args()
     if args.cmd == "generate":

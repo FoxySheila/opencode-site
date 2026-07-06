@@ -313,13 +313,33 @@ async function handleLogin(request, env) {
   }
   // Hash token and look up in KV (value is age-encrypted blob, not parsed)
   const hash = await sha256Hex(token);
+  const tokKey = `tok_${hash}`;
   let entry;
-  try { entry = await env.TOKENS.get(`tok_${hash}`); } catch { entry = null; }
+  try { entry = await env.TOKENS.get(tokKey); } catch { entry = null; }
   if (!entry) {
     await recordAttempt(env, ip);
     return renderLogin('Invalid token.');
   }
-  // KV TTL handles expiry automatically — if the key exists, it's valid
+  // KV TTL handles time-based expiry automatically — if key exists, it's valid
+  // Check usage counter (if it exists)
+  const usesKey = `${tokKey}:u`;
+  let usesEntry;
+  try { usesEntry = await env.TOKENS.get(usesKey); } catch { usesEntry = null; }
+  if (usesEntry) {
+    try {
+      const uses = JSON.parse(usesEntry);
+      if (uses.m > 0 && uses.n >= uses.m) {
+        await recordAttempt(env, ip);
+        return renderLogin('Token has expired (max uses reached).');
+      }
+      // Increment usage counter
+      uses.n = (uses.n || 0) + 1;
+      // Get TTL from the main entry's metadata
+      await env.TOKENS.put(usesKey, JSON.stringify(uses));
+    } catch {
+      // If parsing fails, allow through
+    }
+  }
   // Create session
   const { cookie, expires } = await createSessionCookie(env.SESSION_SECRET);
   const url = new URL(request.url);
