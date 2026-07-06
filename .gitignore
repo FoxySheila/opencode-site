@@ -5,3 +5,4 @@ __pycache__/
 *.stego.png
 site.agekey
 stego_output/
+node_modules/

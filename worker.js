@@ -10,7 +10,7 @@ const LOGIN_PAGE = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OpenCode — Private Access</title>
+<title>Sigil — Private Access</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:#0d0d0f;color:#cfcecd;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif}
@@ -55,6 +55,8 @@ h1{font-size:1.25rem;font-weight:500;color:#8a8a8a;margin-bottom:2rem;letter-spa
       <path d="M168 12H156V30H168V12ZM174 36H150V6H174V36Z" fill="#211E1E"/>
       <path d="M198 30H186V18H198V30Z" fill="#CFCECD"/>
       <path d="M198 12H186V30H198V12ZM204 36H180V6H198V0H204V36Z" fill="#211E1E"/>
+      <path d="M234 24V30H216V24H234Z" fill="#CFCECD"/>
+      <path d="M234 24H216V30H234V36H210V6H234V24ZM216 18H228V12H216V18Z" fill="#211E1E"/>
     </svg>
   </div>
   <h1>Enter your access token</h1>
@@ -69,7 +71,7 @@ h1{font-size:1.25rem;font-weight:500;color:#8a8a8a;margin-bottom:2rem;letter-spa
     <label for="stego-file" id="stego-label">Upload a stego image to extract token</label>
   </div>
   <div id="stego-status"></div>
-  <div class="footer"><span class="status-dot"></span>OpenCode Private Access</div>
+  <div class="footer"><span class="status-dot"></span>Sigil Private Access</div>
 </div>
 <script>
 // ── CRUN TLV stego extraction (client-side) ──
@@ -186,7 +188,7 @@ const SITE_PAGE = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OpenCode — The open source AI coding agent</title>
+<title>Sigil — Token-Gated Gateway</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
@@ -253,68 +255,61 @@ footer{text-align:center;padding:2rem 0;border-top:1px solid #1a1a1e;font-size:.
       <path d="M168 12H156V30H168V12ZM174 36H150V6H174V36Z" fill="#211E1E"/>
       <path d="M198 30H186V18H198V30Z" fill="#CFCECD"/>
       <path d="M198 12H186V30H198V12ZM204 36H180V6H198V0H204V36Z" fill="#211E1E"/>
+      <path d="M234 24V30H216V24H234Z" fill="#CFCECD"/>
+      <path d="M234 24H216V30H234V36H210V6H234V24ZM216 18H228V12H216V18Z" fill="#211E1E"/>
     </svg>
   </div>
   <div class="links">
-    <a href="https://opencode.ai">opencode.ai</a>
-    <a href="https://github.com/anomalyco/opencode">GitHub</a>
+    <a href="https://github.com/FoxySheila/opencode-site">Source</a>
     <span style="color:#636363;font-size:.75rem;padding:0 .5rem">session: {{TOKEN_HASH}}</span>
     <a href="/logout">Logout</a>
   </div>
 </nav>
 <div class="container">
   <div class="hero">
-    <h1>The open source AI coding agent</h1>
-    <p>Free models included or connect any model from any provider, including Claude, GPT, Gemini and more.</p>
-    <div class="install-tabs">
-      <a class="active" href="#" onclick="return false">curl</a>
-      <a href="#" onclick="return false">npm</a>
-      <a href="#" onclick="return false">brew</a>
-    </div>
-    <div class="install-block">
-      <code>curl -fsSL https://opencode.ai/install | bash</code>
-    </div>
+    <h1>Token-gated gateway for private tools</h1>
+    <p>Each token unlocks a private session. Share tokens with friends, set usage limits, and revoke anytime.</p>
+    <div class="install-tabs" style="display:none"></div>
+    <div class="install-block" style="display:none"></div>
   </div>
   <div class="stats">
-    <div class="stat"><div class="stat-num">160K</div><div class="stat-label">GitHub Stars</div></div>
-    <div class="stat"><div class="stat-num">900</div><div class="stat-label">Contributors</div></div>
-    <div class="stat"><div class="stat-num">7.5M</div><div class="stat-label">Monthly Devs</div></div>
+    <div class="stat"><div class="stat-num">∞</div><div class="stat-label">Token Uses</div></div>
+    <div class="stat"><div class="stat-num">256</div><div class="stat-label">Bit Security</div></div>
+    <div class="stat"><div class="stat-num">BLAKE3</div><div class="stat-label">Hashing</div></div>
   </div>
   <div class="features">
-    <div class="feature-card"><h3>LSP Enabled</h3><p>Automatically loads the right language servers for the LLM — context-aware completions.</p></div>
-    <div class="feature-card"><h3>Multi-Session</h3><p>Start multiple agents in parallel on the same project. Work on several tasks at once.</p></div>
-    <div class="feature-card"><h3>Any Model</h3><p>75+ LLM providers through Models.dev. Use Claude, GPT, Gemini, local models, or your own.</p></div>
-    <div class="feature-card"><h3>Privacy First</h3><p>OpenCode does not store any of your code or context data. Operates in sensitive environments.</p></div>
-    <div class="feature-card"><h3>Any Editor</h3><p>Available as a terminal interface, desktop app (macOS, Windows, Linux), and IDE extension.</p></div>
-    <div class="feature-card"><h3>Share Links</h3><p>Share a link to any session for reference or debugging with your team.</p></div>
+    <div class="feature-card"><h3>Hidden in Plain Sight</h3><p>Tokens are stego-embedded in images. Upload any stego image to extract your key — no manual pasting needed.</p></div>
+    <div class="feature-card"><h3>Per-Token Sessions</h3><p>Every token gets its own isolated session. Different tokens, different cookies — no state leakage between users.</p></div>
+    <div class="feature-card"><h3>Expiry &amp; Max Uses</h3><p>Set a time limit and usage cap per token. Once expired or exhausted, the token self-destructs automatically.</p></div>
+    <div class="feature-card"><h3>Age Encrypted at Rest</h3><p>Tokens are age-encrypted in the KV store. The worker decrypts only at auth time with the site keypair.</p></div>
+    <div class="feature-card"><h3>Rate Limited</h3><p>Brute-force protection with exponential backoff. 5 failed attempts = 15-minute IP ban.</p></div>
+    <div class="feature-card"><h3>Stateless Sessions</h3><p>Session cookies use HMAC-SHA256. No server-side session store — fast, scalable, and simple.</p></div>
   </div>
   <div class="section">
-    <h2>About OpenCode</h2>
-    <p>OpenCode is an open source AI coding agent that helps you write code in your terminal, IDE, or desktop. With over 160,000 GitHub stars and 900 contributors, it's trusted by millions of developers every month.</p>
+    <h2>About Sigil</h2>
+    <p>Sigil is a token-gated gateway for sharing access to private tools, steganographic keys, and invitation-only services. Tokens are generated with BLAKE3 + age encryption, embedded into images via 3bpp LSB steganography, and verified by a Cloudflare Worker at the edge. Each token supports configurable expiry, usage caps, and isolated sessions.</p>
     <div class="links">
-      <a href="https://opencode.ai">Visit opencode.ai →</a>
-      <a href="https://github.com/anomalyco/opencode">GitHub Repository →</a>
-      <a href="https://opencode.ai/docs">Documentation →</a>
+      <a href="https://github.com/FoxySheila/opencode-site">Source Code →</a>
     </div>
   </div>
   <div class="section">
     <h2>FAQ</h2>
     <div class="faq-item">
-      <h4>What is OpenCode?</h4>
-      <p>An open source AI coding agent that works in your terminal. Free models included, or bring your own from any provider.</p>
+      <h4>What is Sigil?</h4>
+      <p>A token-gated access system. Each token is a cryptographic key that can be embedded in an image and shared privately.</p>
     </div>
     <div class="faq-item">
-      <h4>How much does it cost?</h4>
-      <p>OpenCode is free and open source. You can use included free models or connect your own API keys for premium models.</p>
+      <h4>How do I get a token?</h4>
+      <p>Tokens are generated by the service admin. Contact them with your request.</p>
     </div>
     <div class="faq-item">
       <h4>What about privacy?</h4>
-      <p>OpenCode does not store your code or context data. It's designed for privacy-sensitive environments.</p>
+      <p>Sigil never sees your image. Token extraction happens entirely in your browser via Canvas — the image never leaves your machine.</p>
     </div>
   </div>
 </div>
 <footer>
-  OpenCode — <a href="https://github.com/anomalyco/opencode" style="color:#636363;text-decoration:none">GitHub</a> · <a href="https://opencode.ai/docs" style="color:#636363;text-decoration:none">Docs</a> · <a href="https://opencode.ai" style="color:#636363;text-decoration:none">opencode.ai</a>
+  Sigil — <a href="https://github.com/FoxySheila/opencode-site" style="color:#636363;text-decoration:none">Source</a>
 </footer>
 </body>
 </html>`;

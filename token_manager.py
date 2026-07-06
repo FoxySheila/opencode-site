@@ -195,6 +195,8 @@ def _generate_token():
 
 def _parse_duration(s):
     s = s.strip().lower()
+    if s in ("never", "0", "none"):
+        return 0
     if s.endswith("d"):
         return int(s[:-1]) * 86400
     if s.endswith("h"):
@@ -229,7 +231,8 @@ def cmd_generate(args):
     token = args.token or _generate_token()
     label = args.label or "unnamed"
     now = int(time.time())
-    expires = args.expires or (now + _parse_duration(args.duration))
+    dur = _parse_duration(args.duration)
+    expires = args.expires or (None if dur == 0 else now + dur)
     max_uses = args.max_uses
     meta = {
         "label": label,
