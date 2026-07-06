@@ -1,0 +1,14 @@
+name = "opencode-site"
+main = "worker.js"
+compatibility_date = "2026-07-06"
+
+# Tokens are stored in Workers KV
+# Create the namespace: wrangler kv namespace create opencode-tokens
+# Then copy the returned ID below
+[[kv_namespaces]]
+binding = "TOKENS"
+id = ""
+
+# SESSION_SECRET must be set as a secret:
+# wrangler secret put SESSION_SECRET
+# (run: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
